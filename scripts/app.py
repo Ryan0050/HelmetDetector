@@ -254,7 +254,7 @@ def main():
     
     apply_custom_styles()
     
-    st.markdown('<h1 class="main-header">Helmet Detection System jhvbfshjdjdshjhsbf</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">Helmet Detection System</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Helmet detection using YOLOv11 for images and real time video</p>', unsafe_allow_html=True)
     
     st.sidebar.markdown("## Detection Mode")
