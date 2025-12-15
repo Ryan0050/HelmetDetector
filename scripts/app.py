@@ -5,8 +5,11 @@ from PIL import Image
 from ultralytics import YOLO
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 import av
+import os
 
-MODEL_PATH = "helmet_detector_yolo11s_v2.pt"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+MODEL_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2.pt")
 
 
 def apply_custom_styles():
