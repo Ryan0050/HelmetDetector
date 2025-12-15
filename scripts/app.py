@@ -349,10 +349,15 @@ def main():
         st.warning("Make sure to allow camera access when prompted by your browser.")
         
         webrtc_streamer(
-            key="helmet detection",
+            key="helmet-detection",
             video_processor_factory=HelmetVideoProcessor,
             rtc_configuration={
-                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]},
+                    {"urls": ["stun:stun1.l.google.com:19302"]},
+                    {"urls": ["stun:stun2.l.google.com:19302"]},
+                    {"urls": ["stun:stun.services.mozilla.com"]},
+                ]
             },
             media_stream_constraints={
                 "video": True,
