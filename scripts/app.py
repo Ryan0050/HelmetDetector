@@ -3,8 +3,9 @@ import cv2
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+from streamlit_webrtc import VideoProcessorBase
 import av
+from camera_input_live import camera_input_live
 
 MODEL_PATH = "helmet_detector_yolo11s_v2.pt"
 
@@ -228,6 +229,37 @@ def draw_detections(image, results):
     
     return annotated_image
 
+def camera_live_mode():
+    st.markdown('<h2 class="section-header">Live Camera Detection</h2>', unsafe_allow_html=True)
+    
+    # capturing the image from the live camera
+    image = camera_input_live()
+    
+    if image is not None:
+        # FIX 1: Open image directly (no BytesIO wrapper)
+        image_pil = Image.open(image)
+        image_np = np.array(image_pil)
+        
+        # FIX 2: Handle RGBA (4 channels) vs RGB (3 channels)
+        if image_np.shape[-1] == 4:
+            # Convert RGBA to BGR (removes transparency)
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGBA2BGR)
+        elif image_np.shape[-1] == 3:
+            # Convert RGB to BGR
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        else:
+            # Fallback for grayscale
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_GRAY2BGR)
+        
+        # Run detection
+        model = load_model()
+        results = model(image_bgr, verbose=False)
+        annotated_image = draw_detections(image_bgr, results)
+        
+        # Convert back to RGB for Streamlit display
+        annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+        
+        st.image(annotated_image_rgb, channels="RGB", use_container_width=True)
 
 class HelmetVideoProcessor(VideoProcessorBase):
     def __init__(self):
@@ -340,24 +372,7 @@ def main():
             col_stat3.metric("Total Detections", helmet_count + no_helmet_count)
     
     else:
-        st.markdown('<h2 class="section-header">Real time Camera Detection</h2>', unsafe_allow_html=True)
-        st.markdown('<p style="color: #94a3b8;">Enable your webcam to detect helmets in real time.</p>', unsafe_allow_html=True)
-        
-        st.warning("Make sure to allow camera access when prompted by your browser.")
-        
-        webrtc_streamer(
-            key="helmet detection",
-            video_processor_factory=HelmetVideoProcessor,
-            rtc_configuration={
-                "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-            },
-            media_stream_constraints={
-                "video": True,
-                "audio": False
-            },
-        )
-        
-        st.info("Click 'START' to begin the webcam feed and helmet detection.")
+        camera_live_mode()
 
 
 if __name__ == "__main__":
