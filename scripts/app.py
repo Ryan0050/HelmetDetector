@@ -5,9 +5,15 @@ from PIL import Image
 from ultralytics import YOLO
 from streamlit_webrtc import VideoProcessorBase
 import av
+<<<<<<< HEAD
 from camera_input_live import camera_input_live
+=======
+import os
+>>>>>>> 0418a87026a617d822dc8ceab8095c937d8968eb
 
-MODEL_PATH = "helmet_detector_yolo11s_v2.pt"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+MODEL_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2.pt")
 
 
 def apply_custom_styles():
@@ -372,7 +378,33 @@ def main():
             col_stat3.metric("Total Detections", helmet_count + no_helmet_count)
     
     else:
+<<<<<<< HEAD
         camera_live_mode()
+=======
+        st.markdown('<h2 class="section-header">Real time Camera Detection</h2>', unsafe_allow_html=True)
+        st.markdown('<p style="color: #94a3b8;">Enable your webcam to detect helmets in real time.</p>', unsafe_allow_html=True)
+        
+        st.warning("Make sure to allow camera access when prompted by your browser.")
+        
+        webrtc_streamer(
+            key="helmet-detection",
+            video_processor_factory=HelmetVideoProcessor,
+            rtc_configuration={
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]},
+                    {"urls": ["stun:stun1.l.google.com:19302"]},
+                    {"urls": ["stun:stun2.l.google.com:19302"]},
+                    {"urls": ["stun:stun.services.mozilla.com"]},
+                ]
+            },
+            media_stream_constraints={
+                "video": True,
+                "audio": False
+            },
+        )
+        
+        st.info("Click 'START' to begin the webcam feed and helmet detection.")
+>>>>>>> 0418a87026a617d822dc8ceab8095c937d8968eb
 
 
 if __name__ == "__main__":
