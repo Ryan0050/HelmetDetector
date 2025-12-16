@@ -1,14 +1,8 @@
 streamlit>=1.28.0
 streamlit-webrtc>=0.45.0
+ultralytics>=8.0.0
+numpy<2.0
 opencv-python-headless<=4.10.0.84
 Pillow>=10.0.0
 av>=10.0.0
-<<<<<<< HEAD
 streamlit-camera-input-live
-=======
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
-torchvision
-ultralytics>=8.0.0
-numpy<2.0
->>>>>>> 0418a87026a617d822dc8ceab8095c937d8968eb
