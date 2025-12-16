@@ -235,26 +235,37 @@ def draw_detections(image, results):
 def camera_live_mode():
     st.markdown('<h2 class="section-header">Live Camera Detection</h2>', unsafe_allow_html=True)
     
-    image = camera_input_live()
+    run = st.checkbox('Start Camera', value=False)
     
-    if image is not None:
-        image_pil = Image.open(image)
-        image_np = np.array(image_pil)
+    FRAME_WINDOW = st.empty()
+    
+    model = load_model()
+    
+    if 'camera' not in st.session_state:
+        st.session_state.camera = cv2.VideoCapture(0)
+    
+    camera = st.session_state.camera
+    
+    while run:
+        ret, frame = camera.read()
         
-        if image_np.shape[-1] == 4:
-            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGBA2BGR)
-        elif image_np.shape[-1] == 3:
-            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-        else:
-            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_GRAY2BGR)
+        if not ret:
+            st.error("Failed to access camera")
+            break
         
-        model = load_model()
-        results = model(image_bgr, verbose=False)
-        annotated_image = draw_detections(image_bgr, results)
+        results = model(frame, verbose=False)
         
-        annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+        annotated_frame = draw_detections(frame, results)
         
-        st.image(annotated_image_rgb, channels="RGB", use_container_width=True)
+        frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        
+        FRAME_WINDOW.image(frame_rgb, channels="RGB", use_container_width=True)
+    
+    if not run:
+        st.write('Camera stopped')
+        if 'camera' in st.session_state:
+            st.session_state.camera.release()
+            del st.session_state.camera
 
 class HelmetVideoProcessor(VideoProcessorBase):
     def __init__(self):
