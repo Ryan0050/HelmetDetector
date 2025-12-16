@@ -232,6 +232,7 @@ def draw_detections(image, results):
     
     return annotated_image
 
+
 def camera_live_mode():
     st.markdown('<h2 class="section-header">Live Camera Detection</h2>', unsafe_allow_html=True)
     
