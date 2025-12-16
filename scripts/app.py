@@ -1,16 +1,43 @@
-import streamlit as st
+import json
+import os
+
+import av
 import cv2
 import numpy as np
+import streamlit as st
 from PIL import Image
+from streamlit_webrtc import (
+    RTCConfiguration,
+    VideoProcessorBase,
+    WebRtcMode,
+    webrtc_streamer,
+)
 from ultralytics import YOLO
-from streamlit_webrtc import VideoProcessorBase
-import av
-from camera_input_live import camera_input_live
-import os
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2.pt")
+CONFIG_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2_config.json")
+DEFAULT_MODEL_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2.pt")
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+CONFIG = load_config()
+MODEL_PATH = CONFIG.get("model_path", DEFAULT_MODEL_PATH)
+# If config points to a missing file, fall back to bundled model
+if not os.path.exists(MODEL_PATH):
+    MODEL_PATH = DEFAULT_MODEL_PATH
+
+CLASS_NAMES = CONFIG.get("class_names", [])
+DEFAULT_CONF = CONFIG.get("default_conf", 0.25)
+DEFAULT_IOU = CONFIG.get("default_iou", 0.45)
+DEFAULT_IMGSZ = CONFIG.get("imgsz", 640)
 
 
 def apply_custom_styles():
@@ -181,7 +208,7 @@ def load_model():
     return model
 
 
-def draw_detections(image, results):
+def draw_detections(image, results, class_names=None):
     annotated_image = image.copy()
     
     img_height, img_width = annotated_image.shape[:2]
@@ -196,7 +223,8 @@ def draw_detections(image, results):
             
             cls = int(box.cls[0])
             conf = float(box.conf[0])
-            class_name = result.names[cls]
+            names = class_names if class_names else result.names
+            class_name = names[cls] if cls < len(names) else str(cls)
             
             if class_name.lower() in ['helmet', 'with_helmet', 'wearing_helmet']:
                 color = (0, 255, 0)
@@ -235,49 +263,67 @@ def draw_detections(image, results):
 
 def camera_live_mode():
     st.markdown('<h2 class="section-header">Live Camera Detection</h2>', unsafe_allow_html=True)
-    
-    run = st.checkbox('Start Camera', value=False)
-    
-    FRAME_WINDOW = st.empty()
-    
-    model = load_model()
-    
-    if 'camera' not in st.session_state:
-        st.session_state.camera = cv2.VideoCapture(0)
-    
-    camera = st.session_state.camera
-    
-    while run:
-        ret, frame = camera.read()
-        
-        if not ret:
-            st.error("Failed to access camera")
-            break
-        
-        results = model(frame, verbose=False)
-        
-        annotated_frame = draw_detections(frame, results)
-        
-        frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        
-        FRAME_WINDOW.image(frame_rgb, channels="RGB", use_container_width=True)
-    
-    if not run:
-        st.write('Camera stopped')
-        if 'camera' in st.session_state:
-            st.session_state.camera.release()
-            del st.session_state.camera
+    st.markdown(
+        '<p style="color: #94a3b8;">Enable your browser webcam to run real-time detection.</p>',
+        unsafe_allow_html=True,
+    )
+
+    available_sizes = [320, 480, 640]
+    default_slider_size = DEFAULT_IMGSZ if DEFAULT_IMGSZ in available_sizes else 480
+
+    input_size = st.select_slider(
+        "Processing resolution (smaller = faster, larger = sharper)",
+        options=available_sizes,
+        value=default_slider_size,
+        label_visibility="collapsed",
+    )
+
+    # WebRTC handles video capture in the browser; this works on hosted Streamlit.
+    ctx = webrtc_streamer(
+        key="helmet-live",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=HelmetVideoProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,  # run processing in a separate thread to keep UI responsive
+        rtc_configuration=RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        ),
+    )
+
+    state_label = "unknown"
+    if ctx and ctx.state is not None:
+        state_label = getattr(ctx.state, "name", str(ctx.state))
+    st.caption(f"WebRTC status: {state_label}")
+
+    if ctx.video_processor:
+        ctx.video_processor.imgsz = input_size
+        ctx.video_processor.conf = DEFAULT_CONF
+        ctx.video_processor.iou = DEFAULT_IOU
+        st.success("Camera is running. Allow webcam access in your browser if prompted.")
+    else:
+        st.info("Click Start and grant webcam permission to begin.")
 
 class HelmetVideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.model = load_model()
+        self.imgsz = DEFAULT_IMGSZ  # overridden from the UI slider
+        self.conf = DEFAULT_CONF
+        self.iou = DEFAULT_IOU
     
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        
-        results = self.model(img, verbose=False)
-        
-        annotated_frame = draw_detections(img, results)
+        try:
+            results = self.model(
+                img,
+                verbose=False,
+                imgsz=self.imgsz,
+                conf=self.conf,
+                iou=self.iou,
+            )
+            annotated_frame = draw_detections(img, results, class_names=CLASS_NAMES)
+        except Exception:
+            # On any inference error, just return the raw frame so video keeps flowing
+            annotated_frame = img
         
         return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
 
@@ -349,8 +395,16 @@ def main():
             
             with st.spinner("Analyzing image..."):
                 model = load_model()
-                results = model(image_bgr, verbose=False)
-                annotated_image = draw_detections(image_bgr, results)
+                results = model(
+                    image_bgr,
+                    verbose=False,
+                    conf=DEFAULT_CONF,
+                    iou=DEFAULT_IOU,
+                    imgsz=DEFAULT_IMGSZ,
+                )
+                annotated_image = draw_detections(
+                    image_bgr, results, class_names=CLASS_NAMES
+                )
                 
                 annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
             
@@ -367,7 +421,8 @@ def main():
             for result in results:
                 for box in result.boxes:
                     cls = int(box.cls[0])
-                    class_name = result.names[cls]
+                    names = CLASS_NAMES if CLASS_NAMES else result.names
+                    class_name = names[cls] if cls < len(names) else str(cls)
                     if class_name.lower() in ['helmet', 'with_helmet', 'wearing_helmet']:
                         helmet_count += 1
                     else:
