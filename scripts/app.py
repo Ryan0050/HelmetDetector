@@ -3,18 +3,42 @@ import cv2
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
-from streamlit_webrtc import VideoProcessorBase
+from streamlit_webrtc import (
+    RTCConfiguration,
+    VideoProcessorBase,
+    WebRtcMode,
+    webrtc_streamer,
+)
 import av
-from camera_input_live import camera_input_live
 import os
 import tempfile
 import io
 import time
+import json
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 MODEL_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2.pt")
+CONFIG_PATH = os.path.join(current_dir, "helmet_detector_yolo11s_v2_config.json")
 
+def load_config():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+CONFIG = load_config()
+MODEL_PATH = CONFIG.get("model_path", MODEL_PATH)
+# If config points to a missing file, fall back to bundled model
+if not os.path.exists(MODEL_PATH):
+    MODEL_PATH = MODEL_PATH
+
+CLASS_NAMES = CONFIG.get("class_names", [])
+DEFAULT_CONF = CONFIG.get("default_conf", 0.25)
+DEFAULT_IOU = CONFIG.get("default_iou", 0.45)
+DEFAULT_IMGSZ = CONFIG.get("imgsz", 640)
 
 def apply_custom_styles():
     st.markdown("""
@@ -238,39 +262,45 @@ def draw_detections(image, results):
 
 def camera_live_mode():
     st.markdown('<h2 class="section-header">Live Camera Detection</h2>', unsafe_allow_html=True)
-    
-    run = st.checkbox('Start Camera', value=False)
-    
-    FRAME_WINDOW = st.empty()
-    
-    model = load_model()
-    
-    if 'camera' not in st.session_state:
-        st.session_state.camera = cv2.VideoCapture(0)
-    
-    camera = st.session_state.camera
-    
-    while run:
-        ret, frame = camera.read()
-        
-        if not ret:
-            st.error("Failed to access camera")
-            break
-        
-        results = model(frame, verbose=False)
-        
-        annotated_frame = draw_detections(frame, results)
-        
-        frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        
-        FRAME_WINDOW.image(frame_rgb, channels="RGB", use_container_width=True)
-    
-    if not run:
-        st.write('Camera stopped')
-        if 'camera' in st.session_state:
-            st.session_state.camera.release()
-            del st.session_state.camera
+    st.markdown(
+        '<p style="color: #94a3b8;">Enable your browser webcam to run real-time detection.</p>',
+        unsafe_allow_html=True,
+    )
 
+    available_sizes = [320, 480, 640]
+    default_slider_size = DEFAULT_IMGSZ if DEFAULT_IMGSZ in available_sizes else 480
+
+    input_size = st.select_slider(
+        "Processing resolution (smaller = faster, larger = sharper)",
+        options=available_sizes,
+        value=default_slider_size,
+        label_visibility="collapsed",
+    )
+
+    # WebRTC handles video capture in the browser; this works on hosted Streamlit.
+    ctx = webrtc_streamer(
+        key="helmet-live",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=HelmetVideoProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,  # run processing in a separate thread to keep UI responsive
+        rtc_configuration=RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        ),
+    )
+
+    state_label = "unknown"
+    if ctx and ctx.state is not None:
+        state_label = getattr(ctx.state, "name", str(ctx.state))
+    st.caption(f"WebRTC status: {state_label}")
+
+    if ctx.video_processor:
+        ctx.video_processor.imgsz = input_size
+        ctx.video_processor.conf = DEFAULT_CONF
+        ctx.video_processor.iou = DEFAULT_IOU
+        st.success("Camera is running. Allow webcam access in your browser if prompted.")
+    else:
+        st.info("Click Start and grant webcam permission to begin.")
 
 def process_video(video_file, model):
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
@@ -338,7 +368,6 @@ def process_video(video_file, model):
     
     cap.release()
     
-    import time
     time.sleep(0.1)
     
     try:
