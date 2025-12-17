@@ -273,24 +273,18 @@ def camera_live_mode():
 
 
 def process_video(video_file, model):
-    """Process uploaded video file and return annotated video"""
-    
-    # Save uploaded video to temporary file
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     tfile.write(video_file.read())
-    tfile.close()  # ADD THIS: Close the file handle
+    tfile.close()
     video_path = tfile.name
     
-    # Open video
     cap = cv2.VideoCapture(video_path)
     
-    # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Initialize PyAV for in-memory video encoding
     output_memory_file = io.BytesIO()
     output = av.open(output_memory_file, 'w', format="mp4")
     stream = output.add_stream('h264', rate=fps)
@@ -299,11 +293,9 @@ def process_video(video_file, model):
     stream.pix_fmt = 'yuv420p'
     stream.options = {'crf': '23'}
     
-    # Statistics
     helmet_detections = []
     no_helmet_detections = []
     
-    # Process each frame
     frame_count = 0
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -313,13 +305,10 @@ def process_video(video_file, model):
         if not ret:
             break
         
-        # Run YOLO detection
         results = model(frame, verbose=False)
         
-        # Draw detections
         annotated_frame = draw_detections(frame, results)
         
-        # Count detections in this frame
         helmet_count = 0
         no_helmet_count = 0
         for result in results:
@@ -334,33 +323,27 @@ def process_video(video_file, model):
         helmet_detections.append(helmet_count)
         no_helmet_detections.append(no_helmet_count)
         
-        # Encode frame to video
         frame_av = av.VideoFrame.from_ndarray(annotated_frame, format='bgr24')
         packet = stream.encode(frame_av)
         output.mux(packet)
         
-        # Update progress
         frame_count += 1
         progress = frame_count / total_frames
         progress_bar.progress(progress)
         status_text.text(f"Processing frame {frame_count}/{total_frames}")
     
-    # Flush encoder
     packet = stream.encode(None)
     output.mux(packet)
     output.close()
     
-    cap.release()  # Release video capture before deleting
+    cap.release()
     
-    # ADD: Small delay to ensure file is released (Windows specific)
     import time
     time.sleep(0.1)
     
-    # Now safe to delete
     try:
         os.unlink(video_path)
     except PermissionError:
-        # If still can't delete, just pass - temp files will be cleaned up later
         pass
     
     output_memory_file.seek(0)
@@ -480,7 +463,7 @@ def main():
             col_stat1.metric("Helmets Detected", helmet_count)
             col_stat2.metric("No Helmet", no_helmet_count)
             col_stat3.metric("Total Detections", helmet_count + no_helmet_count)
-    
+
     elif mode == "Video Upload":
         st.markdown('<h2 class="section-header">Video Upload Detection</h2>', unsafe_allow_html=True)
         st.markdown('<p style="color: #94a3b8;">Upload a video (MP4/AVI/MOV) to detect helmets in real-time playback.</p>', unsafe_allow_html=True)
@@ -492,30 +475,26 @@ def main():
         )
         
         if uploaded_video is not None:
-            # Save uploaded video to temporary file
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
             tfile.write(uploaded_video.read())
             tfile.close()
             video_path = tfile.name
             
-            # Create two columns for controls
-            col1, col2 = st.columns([1, 4])
+            col1, col2, col3 = st.columns([1, 1, 3])
             
             with col1:
                 play_video = st.button("▶️ Play & Detect", use_container_width=True)
                 stop_video = st.button("⏹️ Stop", use_container_width=True)
             
-            # Video info
+            with col2:
+                frame_skip = 1
+            
             cap = cv2.VideoCapture(video_path)
             fps = int(cap.get(cv2.CAP_PROP_FPS))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             duration = total_frames / fps if fps > 0 else 0
             cap.release()
             
-            with col2:
-                st.markdown(f'<p style="color: #94a3b8; padding-top: 8px;">Video Info: {total_frames} frames | {fps} FPS | Duration: {duration:.1f}s</p>', unsafe_allow_html=True)
-            
-            # Initialize session state for video control
             if 'video_playing' not in st.session_state:
                 st.session_state.video_playing = False
             
@@ -525,21 +504,25 @@ def main():
             if play_video:
                 st.session_state.video_playing = True
             
-            # Video display frame
             video_frame = st.empty()
             progress_container = st.empty()
             
-            # Play video with detection
             if st.session_state.video_playing:
                 model = load_model()
                 cap = cv2.VideoCapture(video_path)
                 
                 frame_count = 0
-                frame_delay = 1.0 / fps if fps > 0 else 0.033  # Calculate delay between frames
+                processed_count = 0
+                
+                # Adjust delay based on frame skip
+                frame_delay = (1.0 / fps) * frame_skip if fps > 0 else 0.033
                 
                 progress_bar = progress_container.progress(0)
                 
                 import time
+                
+                # Cache last result for skipped frames
+                last_annotated_frame = None
                 
                 while cap.isOpened() and st.session_state.video_playing:
                     start_time = time.time()
@@ -549,22 +532,26 @@ def main():
                         st.session_state.video_playing = False
                         break
                     
-                    # Run YOLO detection
-                    results = model(frame, verbose=False)
-                    
-                    # Draw detections on frame
-                    annotated_frame = draw_detections(frame, results)
+                    # Process only every Nth frame
+                    if frame_count % frame_skip == 0:
+                        # Run YOLO detection
+                        results = model(frame, verbose=False)
+                        last_annotated_frame = draw_detections(frame, results)
+                        processed_count += 1
+                    else:
+                        # Use last detection result for skipped frames
+                        if last_annotated_frame is None:
+                            last_annotated_frame = frame
                     
                     # Convert BGR to RGB for display
-                    frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                    frame_rgb = cv2.cvtColor(last_annotated_frame, cv2.COLOR_BGR2RGB)
                     
                     # Display frame
                     video_frame.image(frame_rgb, channels="RGB", use_container_width=True)
                     
-                    # Update progress
                     frame_count += 1
                     progress = frame_count / total_frames
-                    progress_bar.progress(progress, text=f"Frame {frame_count}/{total_frames}")
+                    progress_bar.progress(progress, text=f"Frame {frame_count}/{total_frames} (Processed: {processed_count})")
                     
                     # Control playback speed
                     elapsed_time = time.time() - start_time
@@ -574,7 +561,6 @@ def main():
                 cap.release()
                 progress_container.empty()
                 
-                # Clean up temp file
                 try:
                     os.unlink(video_path)
                 except:
@@ -584,7 +570,6 @@ def main():
                     st.success("✅ Video playback completed!")
             
             elif not st.session_state.video_playing and not play_video:
-                # Show thumbnail when not playing
                 cap = cv2.VideoCapture(video_path)
                 ret, first_frame = cap.read()
                 cap.release()
@@ -592,6 +577,8 @@ def main():
                 if ret:
                     first_frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
                     video_frame.image(first_frame_rgb, channels="RGB", use_container_width=True, caption="Click 'Play & Detect' to start")
+
+
     else:
         camera_live_mode()
 
